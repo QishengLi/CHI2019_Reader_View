@@ -1,0 +1,48 @@
+---
+title: "quant_comparison"
+author: "Qisheng Li"
+date: "05/04/2019"
+output: html_document
+---
+
+## Analysis for Section 3
+
+```{r read data}
+library(readr)
+standard_paired <- read_csv("../data/standard_paired.csv")
+reader_paired <- read_csv("../data/reader_paired.csv")
+```
+
+```{r Paired t test (Table 2)}
+
+t.test(standard_paired$complexityScore,reader_paired$complexityScore, paired = TRUE)
+t.test(standard_paired$numOfImageArea,reader_paired$numOfImageArea, paired = TRUE)
+t.test(standard_paired$numOfTextGroup,reader_paired$numOfTextGroup, paired = TRUE)
+
+t.test(standard_paired$colorfulnessScore,reader_paired$colorfulnessScore, paired = TRUE)
+t.test(standard_paired$saturation,reader_paired$saturation, paired = TRUE)
+t.test(standard_paired$numOfLeaves,reader_paired$numOfLeaves, paired = TRUE)
+
+```
+
+```{r Summary}
+metrics_merged <- rbind(standard_paired,reader_paired)
+aggregate(metrics_merged$complexityScore, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$complexityScore, list(condition=metrics_merged$country), sd)
+
+aggregate(metrics_merged$numOfImageArea, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$numOfImageArea, list(condition=metrics_merged$country), sd)
+
+aggregate(metrics_merged$numOfTextGroup, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$numOfTextGroup, list(condition=metrics_merged$country), sd)
+
+aggregate(metrics_merged$colorfulnessScore, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$colorfulnessScore, list(condition=metrics_merged$country), sd)
+
+aggregate(metrics_merged$numOfLeaves, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$numOfLeaves, list(condition=metrics_merged$country), sd)
+
+aggregate(metrics_merged$saturation, list(condition=metrics_merged$country), mean)
+aggregate(metrics_merged$saturation, list(condition=metrics_merged$country), sd)
+```
+

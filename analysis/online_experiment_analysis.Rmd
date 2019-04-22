@@ -1,0 +1,207 @@
+---
+title: "online_experiment"
+author: "Qisheng Li"
+date: "05/04/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r prepare_data}
+
+library(readr)
+library(lmerTest)
+library(ggplot2)
+library(car)
+library(psych)
+library(scales)
+
+
+speed_data <- read_csv('../data/speed_data.csv')
+survey_data <- read_csv('../data/survey_data.csv')
+rsd_data <- read_csv('../data/rsd_data.csv')
+
+#calculate reading speed in WPM
+speed_data$speed <- speed_data$num_words/(speed_data$adjust_rt/60000)
+
+#remove retake participants
+speed_data <- subset(speed_data, retake != 1)
+
+#demographics information
+demographics_data <- subset(speed_data, select = c(uuid, age, device, dyslexia, education, gender, language, retake), !duplicated(uuid))
+
+#filtered survey data by removing repetitive participants
+survey_data <- subset(survey_data, uuid %in% speed_data$uuid)
+```
+
+
+```{r demographics_summary}
+#Age
+summary(demographics_data$age)
+sd(demographics_data$age, na.rm = TRUE)
+#Gender
+aggregate(data.frame(count = demographics_data$gender), list(value = demographics_data$gender), length)
+#Education
+aggregate(data.frame(count = demographics_data$education), list(value = demographics_data$education), length)
+#Language
+aggregate(data.frame(count = demographics_data$language), list(value = demographics_data$language), length)
+#Dyslexia
+aggregate(data.frame(count = demographics_data$dyslexia), list(value = demographics_data$dyslexia), length)
+#Device
+aggregate(data.frame(count = demographics_data$device), list(value = demographics_data$device), length)
+```
+
+```{r prepare_for_analysis}
+
+#check run_time distribution
+qplot(adjust_rt, data=speed_data, geom="histogram")
+result_speed_sd <- aggregate(speed_data$speed, list(uuid=speed_data$uuid), sd) #not used?
+result_rt_sd <- aggregate(speed_data$adjust_rt/60000, list(uuid=speed_data$uuid), sd) #not used?
+
+#remove outliers
+iqr = IQR(speed_data[speed_data$dyslexia_bin == 0,]$speed,na.rm=TRUE)
+cutoff_high = median(speed_data$speed) +3*iqr #3*iqr=645, cutoff_high = 928
+
+#-------remove trials based on speed-------
+result_analysis <- speed_data[! speed_data$speed > cutoff_high, ]
+result_analysis <- result_analysis[ ! result_analysis$speed < 10,]
+
+#-------remove smartphone users-------
+length(unique(subset(result_analysis$uuid, result_analysis$device=='smartphone')))
+result_analysis <- result_analysis[! result_analysis$device == 'smartphone',]
+#removed 64 smartphone users, 363 trials
+
+#-------remove trials based on comprehension < 2/3-------
+result_analysis <- result_analysis[ ! result_analysis$correct_rate < .6,]
+#remove 111 trials
+
+
+```
+
+
+```{r mixed_model (Table 4)}
+#Check normality and take log of speed
+qplot(adjust_rt, data=result_analysis, geom="histogram")
+qplot(log(speed), data=result_analysis, geom="histogram")
+result_analysis$log_speed <- log(result_analysis$speed)
+
+#dyslexia in three groups
+model <- lmer(log_speed ~ page_condition*as.factor(dyslexia) + img_width + num_words + age + english_native + (1 | uuid), data = result_analysis)
+AIC(model)
+summary(model)
+
+```
+
+
+```{r Subjective Ratings (Table 3)}
+
+#Reverse negative readability scales
+survey_data$q2_n <- 8-survey_data$q2;survey_data$q4_n <- 8-survey_data$q4;survey_data$q6_n <- 8-survey_data$q6;
+
+#Individual aggregated scores (removed incomplete answers)
+survey_data$readability <- survey_data$q1 + survey_data$q3 + survey_data$q5 + survey_data$q7 + 8*3 - survey_data$q2 - survey_data$q4 - survey_data$q6
+survey_data$classical_aesthetics <- survey_data$q8 + survey_data$q9 + survey_data$q10 + survey_data$q11 + survey_data$q12
+survey_data$expressive_aesthetics <- survey_data$q13 + survey_data$q14 + survey_data$q15 + survey_data$q16
+
+
+#-----Cronbach's alpha -- Internal consistency is high-----
+#readability
+psych::alpha(subset(survey_data, page_condition==0, select=c(q1,q2_n,q3,q4_n,q5,q6_n,q7)))
+psych::alpha(subset(survey_data, page_condition==1, select=c(q1,q2_n,q3,q4_n,q5,q6_n,q7)))
+#classical aesthetics
+psych::alpha(subset(survey_data, page_condition==0, select=c(q8,q9,q10,q11,q12)))
+psych::alpha(subset(survey_data, page_condition==1, select=c(q8,q9,q10,q11,q12)))
+#expressive aesthetics
+psych::alpha(subset(survey_data, page_condition==0, select=c(q13,q14,q15,q16)))
+psych::alpha(subset(survey_data, page_condition==1, select=c(q13,q14,q15,q16)))
+
+#------Check Normality in 2 ways------
+#(a) Kolmogorov-Smirnov tests: if p > 0.05, normal distribution; if not, use Mann-Whitney U
+ks.test(survey_data$readability,"pnorm")
+ks.test(survey_data$classical_aesthetics,"pnorm")
+ks.test(survey_data$expressive_aesthetics,"pnorm")
+
+#(b) visual inspection
+qplot(readability, data=survey_data, geom="histogram")
+hist(survey_data$readability, breaks=15)
+qplot(classical_aesthetics, data=survey_data, geom="histogram")
+hist(survey_data$classical_aesthetics, breaks=15)
+qplot(expressive_aesthetics, data=survey_data, geom="histogram")
+hist(survey_data$expressive_aesthetics, breaks=15)
+
+#Check whether dyslexia= 1 or 2 are different --> if not, we group them together
+wilcox.test(readability~dyslexia, data=survey_data[survey_data$page_condition==0 & !survey_data$dyslexia==0,]); wilcox.test(readability~dyslexia, data=survey_data[survey_data$page_condition==1 & !survey_data$dyslexia==0,]); wilcox.test(classical_aesthetics~dyslexia, data=survey_data[survey_data$page_condition==0 & !survey_data$dyslexia==0,]); wilcox.test(classical_aesthetics~dyslexia, data=survey_data[survey_data$page_condition==1 & !survey_data$dyslexia==0,]); wilcox.test(expressive_aesthetics~dyslexia, data=survey_data[survey_data$page_condition==0  & !survey_data$dyslexia==0,]); wilcox.test(expressive_aesthetics~dyslexia, data=survey_data[survey_data$page_condition==1 & !survey_data$dyslexia==0,])
+
+
+#----- Calculate Likert Scale means & medians for each question/scale in different conditions (page condition, dyslexia) -----
+df1 = aggregate(q1~dyslexia_bin+page_condition, data = survey_data, mean); df2 = aggregate(q2_n~dyslexia_bin+page_condition, data = survey_data, mean); df3 = aggregate(q3~dyslexia_bin+page_condition, data = survey_data, mean); df4 = aggregate(q4_n~dyslexia_bin+page_condition, data = survey_data, mean); df5 = aggregate(q5~dyslexia_bin+page_condition, data = survey_data, mean); df6 = aggregate(q6_n~dyslexia_bin+page_condition, data = survey_data, mean); df7 = aggregate(q7~dyslexia_bin+page_condition, data = survey_data, mean); df8 = aggregate(q8~dyslexia_bin+page_condition, data = survey_data, mean); df9 = aggregate(q9~dyslexia_bin+page_condition, data = survey_data, mean); df10 = aggregate(q10~dyslexia_bin+page_condition, data = survey_data, mean); df11 = aggregate(q11~dyslexia_bin+page_condition, data = survey_data, mean); df12 = aggregate(q12~dyslexia_bin+page_condition, data = survey_data, mean); df13 = aggregate(q13~dyslexia_bin+page_condition, data = survey_data, mean); df14 = aggregate(q14~dyslexia_bin+page_condition, data = survey_data, mean); df15 = aggregate(q15~dyslexia_bin+page_condition, data = survey_data, mean); df16 = aggregate(q16~dyslexia_bin+page_condition, data = survey_data, mean)
+
+scale_means = Reduce(function(x,y) merge(x,y,by=c('dyslexia_bin','page_condition'),all=TRUE) ,list(df1,df2,df3,df4,df5,df6,df7,df8,df9,df10,df11,df12,df13,df14,df15,df16))
+
+df1 = aggregate(q1~dyslexia_bin+page_condition, data = survey_data, median); df2 = aggregate(q2_n~dyslexia_bin+page_condition, data = survey_data, median); df3 = aggregate(q3~dyslexia_bin+page_condition, data = survey_data, median); df4 = aggregate(q4_n~dyslexia_bin+page_condition, data = survey_data, median); df5 = aggregate(q5~dyslexia_bin+page_condition, data = survey_data, median); df6 = aggregate(q6_n~dyslexia_bin+page_condition, data = survey_data, median); df7 = aggregate(q7~dyslexia_bin+page_condition, data = survey_data, median); df8 = aggregate(q8~dyslexia_bin+page_condition, data = survey_data, median); df9 = aggregate(q9~dyslexia_bin+page_condition, data = survey_data, median); df10 = aggregate(q10~dyslexia_bin+page_condition, data = survey_data, median); df11 = aggregate(q11~dyslexia_bin+page_condition, data = survey_data, median); df12 = aggregate(q12~dyslexia_bin+page_condition, data = survey_data, median); df13 = aggregate(q13~dyslexia_bin+page_condition, data = survey_data, median); df14 = aggregate(q14~dyslexia_bin+page_condition, data = survey_data, median); df15 = aggregate(q15~dyslexia_bin+page_condition, data = survey_data, median); df16 = aggregate(q16~dyslexia_bin+page_condition, data = survey_data, median)
+
+scale_medians = Reduce(function(x,y) merge(x,y,by=c('dyslexia_bin','page_condition'),all=TRUE) ,list(df1,df2,df3,df4,df5,df6,df7,df8,df9,df10,df11,df12,df13,df14,df15,df16))
+
+#Average Readability
+scale_means$readability <- rowMeans(subset(scale_means, select = c(q1,q2_n,q3,q4_n,q5,q6_n,q7)), na.rm = TRUE)
+#Average Classical Aesthetics
+scale_means$classical_aesthetics <- rowMeans(subset(scale_means, select = c(q8,q9,q10,q11,q12)), na.rm = TRUE)
+#Average Expressive Aesthetics
+scale_means$expressive_aesthetics <- rowMeans(subset(scale_means, select = c(q13,q14,q15,q16)), na.rm = TRUE)
+
+#Manually calculate Medians in 4 conditions
+tmp <- survey_data[survey_data$dyslexia_bin==1 & survey_data$page_condition==1,]
+
+median(rbind(tmp[[c('q1')]], tmp[[c('q3')]], tmp[[c('q5')]], tmp[[c('q7')]], tmp[[c('q2_n')]], tmp[[('q4_n')]], tmp[[('q6_n')]]), na.rm=TRUE)
+median(rbind(tmp[[('q8')]], tmp[[('q9')]], tmp[[('q10')]], tmp[[('q11')]], tmp[[('q12')]]), na.rm=TRUE)
+median(rbind(tmp[[('q13')]], tmp[[('q14')]], tmp[[('q15')]], tmp[[('q16')]]), na.rm=TRUE)
+
+scale_medians$readability <- c(5, 6, 4, 5)
+scale_medians$classical_aesthetics <- c(4,5,4,5)
+scale_medians$expressive_aesthetics <- c(3,3,2,3)
+
+
+#-----------------------Mann-Whitney U Test-------------------------------
+
+#Between page condition: readability & classical aesthetics significant
+wilcox.test(readability~page_condition, data=survey_data);wilcox.test(classical_aesthetics~page_condition, data=survey_data);wilcox.test(expressive_aesthetics~page_condition, data=survey_data);
+#Between dyslexia vs. non-dyslexia
+wilcox.test(readability~dyslexia_bin, data=survey_data[survey_data$page_condition==0,]); wilcox.test(readability~dyslexia_bin, data=survey_data[survey_data$page_condition==1,]); wilcox.test(classical_aesthetics~dyslexia_bin, data=survey_data[survey_data$page_condition==0,]); wilcox.test(classical_aesthetics~dyslexia_bin, data=survey_data[survey_data$page_condition==1,]); wilcox.test(expressive_aesthetics~dyslexia_bin, data=survey_data[survey_data$page_condition==0,]); wilcox.test(expressive_aesthetics~dyslexia_bin, data=survey_data[survey_data$page_condition==1,])
+
+```
+
+
+```{r Relative Subject Duration (RSD)}
+
+rsd_data$diff <- rsd_data$adjust_rt/1000 - rsd_data$rsd*60 #negative --> over-estimate
+
+#By dyslexia in three groups
+summary(aov(diff~page_condition*dyslexia, data=rsd_data)) #dyslexia also significant
+
+#By page condition
+aggregate(diff~page_condition, data = rsd_data, mean)
+aggregate(diff~page_condition, data = rsd_data, sd)
+t.test(diff~page_condition, data = rsd_data)
+
+#======average rt, overestimation (%)======
+aggregate(adjust_rt/1000~dyslexia,data = rsd_data, mean)
+aggregate(adjust_rt/1000~dyslexia, data = rsd_data, sd)
+aggregate(adjust_rt/1000~page_condition, data = rsd_data, mean)
+
+
+#By dyslexia status
+aggregate(diff~dyslexia, data = rsd_data[rsd_data$page_condition==0 & !rsd_data$dyslexia==2,], mean)
+aggregate(diff~dyslexia, data = rsd_data[rsd_data$page_condition==0 & !rsd_data$dyslexia==2,], sd)
+aggregate(diff~dyslexia, data = rsd_data[rsd_data$page_condition==1 & !rsd_data$dyslexia==2,], mean)
+aggregate(diff~dyslexia, data = rsd_data[rsd_data$page_condition==1 & !rsd_data$dyslexia==2,], sd)
+
+#Between non- and diagnosed dyslexia
+t.test(diff~dyslexia,data = rsd_data[rsd_data$page_condition==0 & !rsd_data$dyslexia==2,])
+t.test(diff~dyslexia,data = rsd_data[rsd_data$page_condition==1 & !rsd_data$dyslexia==2,])
+
+#Between self-diagnosed and diagnosed (n.s.)
+t.test(diff~dyslexia,data = rsd_data[rsd_data$page_condition==0 & !rsd_data$dyslexia==0,])
+t.test(diff~dyslexia,data = rsd_data[rsd_data$page_condition==1 & !rsd_data$dyslexia==0,])
+
+```
+
